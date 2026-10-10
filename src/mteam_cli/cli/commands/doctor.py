@@ -33,6 +33,12 @@ def handle(args: argparse.Namespace, settings: Settings) -> int:
             _valid_range(settings.schedule_pre_delay_range),
             settings.schedule_pre_delay_range,
         ),
+        ("schedule_every_days", True, f"{settings.schedule_every_days} 天"),
+        (
+            "schedule_remind_day",
+            True,
+            f"每月 {settings.schedule_remind_day} 日" if settings.schedule_remind_day else "关闭",
+        ),
     ]
 
     all_ok = True
@@ -61,6 +67,10 @@ def handle(args: argparse.Namespace, settings: Settings) -> int:
             channels.append("飞书")
         ch = "+".join(channels) if channels else "无通知"
         print(f"  - {acct.username:<20} [{cap_k}/{cap_q}]  通知:{ch:<12} {seen}")
+        print(
+            f"    事件: {','.join(acct.notify_events)}"
+            f"  登录方式: {'每次账号密码' if acct.force_password_login else 'LocalStorage 优先'}"
+        )
         if not acct.can_keepalive and not acct.can_query:
             print(f"    ⚠ {acct.username} 既不能保活也不能查询，请补全凭证。")
             all_ok = False

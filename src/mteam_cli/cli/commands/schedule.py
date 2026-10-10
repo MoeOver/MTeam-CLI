@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from mteam_cli.automation.remind import run_remind_tick
 from mteam_cli.automation.runner import run_one_account_tick
 from mteam_cli.core.config import Account, Settings
 from mteam_cli.scheduler.daily import DailyScheduler
@@ -30,5 +31,8 @@ def handle(args: argparse.Namespace, settings: Settings) -> int:
     def tick_factory(account: Account):
         return run_one_account_tick(account, settings, logger)
 
-    DailyScheduler(settings, logger, tick_factory).loop()
+    def remind_factory(account: Account):
+        return run_remind_tick(account, settings, logger)
+
+    DailyScheduler(settings, logger, tick_factory, remind_factory).loop()
     return 0

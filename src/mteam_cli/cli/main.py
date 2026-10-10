@@ -25,6 +25,7 @@ _COMMAND_MODULES = (
     "login",
     "run",
     "schedule",
+    "remind",
     "inspect",
     # data queries (API key)
     "profile",

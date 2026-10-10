@@ -12,6 +12,7 @@ from typing import Protocol
 class NotificationEvent(str, Enum):
     CHECKIN_DONE = "checkin_done"      # keep-alive login succeeded
     CHECKIN_FAILED = "checkin_failed"  # keep-alive login failed
+    REMIND = "remind"                  # periodic account-status reminder
 
 
 @dataclass(slots=True)
@@ -31,15 +32,24 @@ class Notifier(Protocol):
 class NotifierHub:
     """Fan-out to all registered notifiers concurrently; errors are isolated."""
 
-    def __init__(self, notifiers: list[Notifier], logger: logging.Logger) -> None:
+    def __init__(
+        self,
+        notifiers: list[Notifier],
+        logger: logging.Logger,
+        events: tuple[str, ...] | None = None,
+    ) -> None:
         self._notifiers = notifiers
         self._logger = logger
+        self._events = events  # None = deliver every event
 
     @property
     def enabled_names(self) -> list[str]:
         return [n.name for n in self._notifiers]
 
     async def notify(self, n: Notification) -> None:
+        if self._events is not None and n.event.value not in self._events:
+            self._logger.info("Notify %s skipped (not in notify.events)", n.event.value)
+            return
         if not self._notifiers:
             self._logger.debug("No notifiers enabled; skipping %s", n.event.value)
             return

@@ -1,8 +1,24 @@
-"""Formatting helpers for M-Team numeric fields (bytes / ratio)."""
+"""Formatting helpers for M-Team fields (bytes / ratio / timestamps)."""
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import humanize as _humanize
+
+# M-Team reports member timestamps as naive Asia/Shanghai wall-clock strings.
+SITE_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def parse_site_time(value: object) -> datetime | None:
+    """Parse an M-Team ``YYYY-MM-DD HH:MM:SS`` timestamp (Asia/Shanghai)."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S").replace(tzinfo=SITE_TZ)
+    except ValueError:
+        return None
 
 
 def naturalsize(value: object) -> str:

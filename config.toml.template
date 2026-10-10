@@ -21,6 +21,12 @@ timeout_ms = 60000
 window = "09:00-11:00"
 pre_delay_range = "10-300"
 heartbeat_hours = 1
+# 保活间隔（天，1–30）。调度器仍每天在 window 内触发，但距上次成功不足该天数时跳过：
+# 容器重启不会重置计时，失败后次日自动重试。
+every_days = 1
+# 每月几号（1–28）推送一次保号状态提醒（站点最后登录 / 删号截止 / VIP 到期；
+# 最后登录超过 every_days+3 天会升级为「保活可能已失效」）。0 = 关闭。
+remind_day = 0
 
 # ── SMTP 服务器（全局，所有账户共享；收件人在各账户里）──────────
 # port 465=SSL，587=STARTTLS。password 用授权码而非登录密码。
@@ -56,6 +62,10 @@ password = "pass1"
 totp_secret = "totp1"
 api_key = "apikey1"
 digest_enabled = false          # true → 该账户签到通知尾部附当天新片精选（需 api_key）
+# true → 不复用 LocalStorage 快照，每次都账号密码 + TOTP 真实登录，并要求站点返回的
+# lastLogin 更新到本次时间才算成功。API Key 的调用也会刷新 lastBrowse，只有 lastLogin
+# 能证明站点真的记了一次登录。建议配合 every_days = 7 使用。
+force_password_login = false
 
   # 该账户的通知（各渠道各自 opt-in；都留空 = 不发通知）
   [account.notify]
@@ -63,6 +73,9 @@ digest_enabled = false          # true → 该账户签到通知尾部附当天�
   telegram_chat_id = ""
   feishu_token = ""             # 飞书 webhook token
   smtp_to = ""                  # SMTP 收件人（服务器配置见上方 [smtp]）
+  # 推送哪些事件：checkin_done（签到成功）/ checkin_failed（失败）/ remind（状态提醒）。
+  # 缺省 = 全部。只想在出问题时被打扰：["checkin_failed", "remind"]
+  # events = ["checkin_failed", "remind"]
 
   # 该账户的 digest 覆盖（可选；只写想改的键，其余继承上面的 [digest]）
   # [account.digest]

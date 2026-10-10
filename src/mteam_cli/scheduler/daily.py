@@ -4,6 +4,12 @@ Each account gets its own random
 HH:MM inside the window, plus extra in-tick jitter so request bursts differ
 even when two accounts land on the same minute. Exceptions inside a tick are
 logged but never crash the loop; a heartbeat logs liveness for ``docker logs``.
+
+``[schedule].every_days > 1`` keeps the daily trigger but skips while the
+on-disk last success is younger than the interval — restart-safe (a container
+restart doesn't reset the countdown) and a failed tick is retried next day.
+``[schedule].remind_day`` adds a daily job that sends the status reminder on
+that day of the month.
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ import asyncio
 import logging
 import random
 import time
+from datetime import date, datetime, timedelta
 from typing import Awaitable, Callable
 
 import schedule
@@ -28,10 +35,12 @@ class DailyScheduler:
         settings: Settings,
         logger: logging.Logger,
         tick_factory: TickFactory,
+        remind_factory: TickFactory | None = None,
     ) -> None:
         self.settings = settings
         self.logger = logger
         self.tick_factory = tick_factory
+        self.remind_factory = remind_factory
         self._pre_low, self._pre_high = _parse_range(
             settings.schedule_pre_delay_range, default=(10, 300)
         )
@@ -52,7 +61,17 @@ class DailyScheduler:
                 continue
             run_time = self.pick_daily_time()
             schedule.every().day.at(run_time).do(self._make_job(acct))
-            self.logger.info("已为 %s 安排每天 %s 保活", acct.username, run_time)
+            self.logger.info(
+                "已为 %s 安排每天 %s 检查保活（间隔 %d 天）",
+                acct.username, run_time, self.settings.schedule_every_days,
+            )
+            if self.remind_factory and self.settings.schedule_remind_day:
+                remind_time = self.pick_daily_time()
+                schedule.every().day.at(remind_time).do(self._make_remind_job(acct))
+                self.logger.info(
+                    "已为 %s 安排每月 %d 日 %s 发送状态提醒",
+                    acct.username, self.settings.schedule_remind_day, remind_time,
+                )
             armed += 1
 
         if armed == 0:
@@ -70,6 +89,15 @@ class DailyScheduler:
 
     def _make_job(self, account: Account) -> Callable[[], None]:
         def job() -> None:
+            if not keepalive_due(
+                account.read_last_ok(self.settings.auth_dir), datetime.now().astimezone(),
+                self.settings.schedule_every_days,
+            ):
+                self.logger.info(
+                    "[%s] 距上次保活成功未满 %d 天，跳过",
+                    account.username, self.settings.schedule_every_days,
+                )
+                return
             delay = random.randint(self._pre_low, self._pre_high)
             self.logger.info("[%s] 触发保活，先抖动 %ds…", account.username, delay)
             time.sleep(delay)
@@ -81,9 +109,31 @@ class DailyScheduler:
 
         return job
 
+    def _make_remind_job(self, account: Account) -> Callable[[], None]:
+        def job() -> None:
+            if date.today().day != self.settings.schedule_remind_day:
+                return
+            try:
+                asyncio.run(self.remind_factory(account))
+            except Exception:  # noqa: BLE001 — keep the loop alive
+                self.logger.exception("[%s] 发送提醒异常；循环继续", account.username)
+
+        return job
+
     def _heartbeat(self) -> None:
         next_runs = ", ".join(str(j.next_run) for j in schedule.jobs if j.next_run)
         self.logger.info("调度心跳：下次运行 %s", next_runs or "(无)")
+
+
+def keepalive_due(last_ok: datetime | None, now: datetime, every_days: int) -> bool:
+    """Due unless the last success is younger than the interval.
+
+    12h slack so a daily trigger at a different random minute still fires on
+    the intended day instead of slipping a whole extra day.
+    """
+    if last_ok is None:
+        return True
+    return now - last_ok >= timedelta(days=every_days) - timedelta(hours=12)
 
 
 def _parse_window(spec: str) -> tuple[int, int]:

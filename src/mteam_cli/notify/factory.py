@@ -48,7 +48,7 @@ def build_notifier_hub(
     if account.has_feishu:
         notifiers.append(FeishuNotifier(token=account.feishu_token))
 
-    hub = NotifierHub(notifiers, logger)
+    hub = NotifierHub(notifiers, logger, events=account.notify_events)
     if notifiers:
         logger.info("[%s] Notifiers enabled: %s", account.username, ", ".join(hub.enabled_names))
     else:

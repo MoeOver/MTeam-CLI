@@ -31,10 +31,17 @@ mteam-cli doctor                     # 自检：账户/通知/路径/调度（�
 mteam-cli login              # 对默认账户做一次登录（--account 指定其他账户）
 mteam-cli run                # 立即对所有账户跑一轮保活（--account 限定单个）
 mteam-cli schedule           # 常驻：每账户每天在随机时刻自动保活（容器默认命令）
+mteam-cli remind             # 立即推送一次保号状态提醒（站点最后登录 / 删号截止 / VIP 到期）
 mteam-cli inspect --login    # DOM 变动时抓取登录页快照排查
 ```
 
-`schedule` 为每个可保活账户各自挑一个 `[schedule].window` 窗口内的随机时刻，到点先抖动 10–300s 再登录；失败只记日志不退出；每小时一条心跳。保活流程：优先用每账户的 localStorage 快照（跳过 2FA），失败则回退「账号密码 + TOTP」，并拦截 `/api/member/profile` 确认成功。
+`schedule` 为每个可保活账户各自挑一个 `[schedule].window` 窗口内的随机时刻，到点先抖动 10–300s 再登录；失败只记日志不退出；每小时一条心跳。保活流程：优先用每账户的 localStorage 快照（跳过 2FA），失败则回退「账号密码 + TOTP」，并拦截 `/api/member/profile` 确认成功；失败时在 `data/artifacts` 留截图与 HTML 现场。
+
+更稳的保号配置（推荐）：
+
+- `force_password_login = true`：每次都真实账号密码登录，并要求站点返回的 `lastLogin` 更新到本次——API Key 调用也会刷新「最后访问」，只有「最后登录」能证明站点真记了一次登录。
+- `[schedule].every_days = 7`：每周登录一次即可（重启不重置计时，失败次日自动重试）。
+- `[schedule].remind_day = 1` + `[account.notify].events = ["checkin_failed", "remind"]`：平时不打扰，只在失败时和每月 1 号推送状态（最后登录超过 10 天会升级为「保活可能已失效」）。
 
 ## 用法二：数据查询（API Key，喂给 AI / Agent）
 

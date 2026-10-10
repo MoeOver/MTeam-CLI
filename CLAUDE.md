@@ -26,6 +26,7 @@ mteam-cli doctor                     # sync self-check; no playwright/pyotp/api 
 mteam-cli login   [--account NAME]   # one-shot browser login (password+TOTP), saves localStorage
 mteam-cli run     [--account NAME]   # one keep-alive tick (default: ALL keep-alive accounts)
 mteam-cli schedule                   # long-running, one daily job per account (container default)
+mteam-cli remind  [--account NAME]   # send the account-status reminder now (lastLogin / deadline / VIP)
 mteam-cli inspect [--login]          # dump login-page artifacts when the DOM changes
 
 # ── data queries (API key; --account defaults to first; -f/--format) ──
@@ -95,11 +96,14 @@ Verified against M-Team's OpenAPI spec (`https://test2.m-team.cc/api/swagger-ui/
 
 ### `automation/` (keep-alive — browser)
 - `localstorage.py` — `LocalStorageManager` (load/save a page's localStorage to the per-account JSON file). M-Team stores its JWT in localStorage, so this — not Playwright `storage_state` — is the persistence mechanism (proven in the legacy script; do not "upgrade" it blindly).
-- `login.py` — `perform_login(session, account, settings, logger)`: localStorage-first → password+TOTP fallback, confirmed by intercepting the `/api/member/profile` XHR and matching `data.username` with URL on `/index`. Handles the **three 2FA variants** (direct redirect / `#otp-code` input / `button:has-text("確認")`). **The login DOM selectors live here — update them (via `inspect`) when M-Team changes the login page.**
-- `runner.py` — `run_one_account_tick` (builds that account's own hub via `build_notifier_hub(account, logger)`, then notifies through it) + `run_all_accounts` (loop, **failures isolated per account**). Single source shared by `run` + `schedule`. No `SESSION_EXPIRED`/exit-78 (no human-in-loop).
+- `login.py` — `perform_login(session, account, settings, logger)`: localStorage-first (skipped when `force_password_login`) → password+TOTP fallback, confirmed by intercepting the `/api/member/profile` XHR (fulfilled from the fetched response — no duplicate request) and matching `data.username` while not on `/login`. After a password login it also requires the site's `memberStatus.lastLogin` to have moved to this run (`login_recorded`) — API-key traffic moves `lastBrowse`, never `lastLogin`, so that is the proof a real login was recorded. On failure saves a screenshot+HTML snapshot to `artifact_dir`. 2FA variants: direct redirect / OTP input (`#otp-code`, `one-time-code`, 驗證碼/验证码 placeholder) / confirm button (確認/确认/確定/确定/Confirm). Typing is per-character with jitter. **The login DOM selectors live here — update them (via `inspect`) when M-Team changes the login page.**
+- `runner.py` — `run_one_account_tick` (builds that account's own hub via `build_notifier_hub(account, logger)`, then notifies through it; on success writes `mteam_<user>.last_ok` in `auth_dir`) + `run_all_accounts` (loop, **failures isolated per account**). Single source shared by `run` + `schedule`. No `SESSION_EXPIRED`/exit-78 (no human-in-loop).
+- `remind.py` — `run_remind_tick` / `compose_reminder`: no browser; site `lastLogin` + 40-day deadline + VIP (via api_key) and local `last_ok`; title escalates when the last real login is older than `every_days + 3`.
 
 ### `scheduler/`
-`DailyScheduler.loop()` arms **one daily job per keep-alive account**, each at its own random HH:MM inside the window, plus in-tick jitter. Exceptions are logged but never crash the loop; hourly heartbeat for `docker logs` liveness. Each tick spawns its own `asyncio.run`.
+`DailyScheduler.loop()` arms **one daily job per keep-alive account**, each at its own random HH:MM inside the window, plus in-tick jitter. `[schedule].every_days > 1` keeps the daily trigger but skips while `last_ok` is younger than the interval (`keepalive_due`, 12h slack) — restart-safe, and failures retry next day. `[schedule].remind_day` adds a daily job that sends the reminder on that day of month. Exceptions are logged but never crash the loop; hourly heartbeat for `docker logs` liveness. Each tick spawns its own `asyncio.run`.
+
+Notification filtering: `[account.notify].events` (`checkin_done`/`checkin_failed`/`remind`, default all) is enforced in one place, `NotifierHub.notify`. `config.NOTIFY_EVENTS` must equal `NotificationEvent` values (core can't import notify; a test pins this).
 
 ### `cli/`
 - `main.py` — discovers `_COMMAND_MODULES`, calls each module's `register(subparsers)`, routes `args.func`. Sync commands declare `IS_ASYNC = False` (`doctor`, `schedule`) and get `handle(args, settings)`; async get `handle(args, settings, logger)`.

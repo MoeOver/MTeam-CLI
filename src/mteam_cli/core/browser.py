@@ -40,11 +40,21 @@ class BrowserSession:
         self.browser = await self.playwright.chromium.launch(
             headless=self.settings.headless if headless is None else headless,
             slow_mo=self.settings.slow_mo_ms,
+            # Hide navigator.webdriver; headless is otherwise trivially detectable.
+            args=["--disable-blink-features=AutomationControlled"],
         )
+        # Headless Chromium advertises "HeadlessChrome" in its UA. Present the same
+        # build as a regular desktop Chrome (reduced-UA format, platform kept
+        # consistent with navigator.platform = Linux).
+        major = self.browser.version.split(".", 1)[0]
         self.context = await self.browser.new_context(
             viewport={"width": 1440, "height": 960},
             locale="zh-CN",
             timezone_id="Asia/Shanghai",
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                f"(KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+            ),
         )
         self.page = await self.context.new_page()
         self.page.set_default_timeout(self.settings.timeout_ms)

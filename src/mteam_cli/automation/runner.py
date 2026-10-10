@@ -15,6 +15,7 @@ affects keep-alive.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from mteam_cli.api import fetch_high_score_digest, format_digest
 from mteam_cli.automation.login import perform_login
@@ -47,6 +48,12 @@ async def run_one_account_tick(
     except Exception as exc:  # noqa: BLE001 — isolate per account
         logger.exception("[%s] 保活过程崩溃", account.username)
         result = CheckinResult(username=account.username, ok=False, error=str(exc))
+
+    if result.ok:
+        # Read by the scheduler (interval) and ``remind`` (last success).
+        last_ok = account.last_ok_path(settings.auth_dir)
+        last_ok.parent.mkdir(parents=True, exist_ok=True)
+        last_ok.write_text(datetime.now().astimezone().isoformat(timespec="seconds"), encoding="utf-8")
 
     digest_text = ""
     if result.ok and account.digest_enabled:

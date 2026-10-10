@@ -4,6 +4,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
@@ -50,6 +51,11 @@ def _env_secret(name: str) -> str | None:
     return raw.strip() if raw and raw.strip() else None
 
 
+# Notification events an account can subscribe to via ``[account.notify].events``.
+# Must equal the values of ``notify.base.NotificationEvent`` (core can't import notify).
+NOTIFY_EVENTS = ("checkin_done", "checkin_failed", "remind")
+
+
 @dataclass(slots=True, frozen=True)
 class DigestConfig:
     """一个账户解析后的最终 digest 参数（全局默认 + 账户覆盖合并后）。"""
@@ -83,6 +89,11 @@ class Account:
     feishu_token: str | None = None
     smtp_to: str | None = None  # recipient(s); server config lives on Settings
     digest_enabled: bool = False
+    # Events this account is notified about (default: all, i.e. legacy behaviour).
+    notify_events: tuple[str, ...] = NOTIFY_EVENTS
+    # Skip the localStorage snapshot and do a real password+TOTP login every tick,
+    # so the site's lastLogin moves and can be verified.
+    force_password_login: bool = False
     # ── per-account digest overrides (None = 继承全局 Settings.digest_*) ──
     digest_types: list[str] | None = None
     digest_min_imdb: float | None = None
@@ -96,6 +107,16 @@ class Account:
 
     def storage_path(self, auth_dir: Path) -> Path:
         return auth_dir / f"mteam_{self.safe_name}.json"
+
+    def last_ok_path(self, auth_dir: Path) -> Path:
+        """Timestamp file of the last successful keep-alive (scheduler + ``remind``)."""
+        return auth_dir / f"mteam_{self.safe_name}.last_ok"
+
+    def read_last_ok(self, auth_dir: Path) -> datetime | None:
+        try:
+            return datetime.fromisoformat(self.last_ok_path(auth_dir).read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
 
     @property
     def can_keepalive(self) -> bool:
@@ -175,6 +196,8 @@ class Settings:
     schedule_window: str = "09:00-11:00"
     schedule_pre_delay_range: str = "10-300"
     schedule_heartbeat_hours: int = 1
+    schedule_every_days: int = 1  # keep-alive interval in days
+    schedule_remind_day: int = 0  # day of month (1-28) for the status reminder; 0 = off
 
     @classmethod
     def from_toml(cls, path: Path | None = None) -> "Settings":
@@ -217,6 +240,8 @@ class Settings:
             schedule_window=str(schedule.get("window", "09:00-11:00")).strip(),
             schedule_pre_delay_range=str(schedule.get("pre_delay_range", "10-300")).strip(),
             schedule_heartbeat_hours=int(schedule.get("heartbeat_hours", 1)),
+            schedule_every_days=_int_in_range(schedule.get("every_days", 1), 1, 30, "[schedule].every_days"),
+            schedule_remind_day=_int_in_range(schedule.get("remind_day", 0), 0, 28, "[schedule].remind_day"),
         )
 
     @staticmethod
@@ -253,6 +278,8 @@ class Settings:
                     feishu_token=notify.get("feishu_token") or None,
                     smtp_to=notify.get("smtp_to") or None,
                     digest_enabled=bool(a.get("digest_enabled", False)),
+                    notify_events=_parse_events(notify.get("events"), i),
+                    force_password_login=bool(a.get("force_password_login", False)),
                     # 原生类型，无需 split / 转换；缺键 → None（继承全局，合并在 resolved_digest_config）
                     digest_types=adigest.get("types"),
                     digest_min_imdb=adigest.get("min_imdb"),
@@ -280,3 +307,25 @@ class Settings:
         self.auth_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _int_in_range(value, low: int, high: int, name: str) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        n = None
+    if n is None or not low <= n <= high:
+        raise SystemExit(f"config.toml 的 {name} 必须是 {low}–{high} 的整数（收到 {value!r}）。")
+    return n
+
+
+def _parse_events(value, index: int) -> tuple[str, ...]:
+    """``[account.notify].events``；缺省 = 全部事件（兼容旧行为）。"""
+    if value is None:
+        return NOTIFY_EVENTS
+    if not isinstance(value, list) or any(e not in NOTIFY_EVENTS for e in value):
+        raise SystemExit(
+            f"config.toml 第 {index} 个 [[account]] 的 notify.events 只能取 "
+            f"{', '.join(NOTIFY_EVENTS)}（收到 {value!r}）。"
+        )
+    return tuple(value)
